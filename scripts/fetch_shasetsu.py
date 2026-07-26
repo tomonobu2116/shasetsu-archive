@@ -1,20 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-社説リンクアーカイブ 取得スクリプト（毎日新聞のみ / PoC版）
-
-やること:
-  1. 毎日新聞「社説・解説・コラム」RSS を取得
-  2. タイトルが「社説」で始まる項目だけ抽出（＝社説のみに絞る）
-  3. タイトル / URL / 公開日 / 新聞社名 を data/articles.json に追記
-  4. URL で重複排除（既存データは保持 = アーカイブ）
-
-保存する情報は「タイトル・URL・公開日・新聞社名」のみ。
-本文・要約・画像は一切取得・保存しない。
-
-実行: python scripts/fetch_shasetsu.py
-依存: 標準ライブラリのみ（追加インストール不要）
-"""
+"""社説リンクアーカイブ 取得スクリプト（毎日新聞のみ / 診断強化版）"""
 
 import json
 import os
@@ -24,34 +10,26 @@ from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from xml.etree import ElementTree as ET
 
-# ---- 設定 -------------------------------------------------------------
-
-# 取得対象。今は毎日新聞のみ。将来ここに追加できる構造にしてある。
 SOURCES = [
     {
         "name": "毎日新聞",
         "rss": "https://mainichi.jp/rss/etc/opinion.rss",
-        # タイトルがこの接頭辞で始まる項目だけを社説として採用する。
-        # 毎日新聞の社説は概ね「社説：…」形式のため。
-        "title_prefix": "社説",
+        # タイトルに「社説」を含む項目だけ採用（含まれない項目は除外）
+        "title_keyword": "社説",
     },
 ]
 
-# 出力先
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_PATH = os.path.join(BASE_DIR, "data", "articles.json")
-
 JST = timezone(timedelta(hours=9))
+NS = {"dc": "http://purl.org/dc/elements/1.1/"}
 
-# RSS の名前空間（dc:date 用）
-NS = {
-    "dc": "http://purl.org/dc/elements/1.1/",
-}
+# 一部ニュースサイトはブラウザ以外のUAを弾くため、ブラウザ風UAを指定
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
 
-USER_AGENT = "ShasetsuArchive/0.1 (personal, RSS reader; title+link only)"
-
-
-# ---- ユーティリティ ---------------------------------------------------
 
 def fetch(url: str) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
@@ -60,8 +38,6 @@ def fetch(url: str) -> bytes:
 
 
 def parse_pubdate(item: ET.Element) -> str:
-    """公開日を YYYY-MM-DD (JST) で返す。取れなければ空文字。"""
-    # 1) RSS 標準の pubDate
     pub = item.findtext("pubDate")
     if pub:
         try:
@@ -71,7 +47,6 @@ def parse_pubdate(item: ET.Element) -> str:
             return dt.astimezone(JST).strftime("%Y-%m-%d")
         except Exception:
             pass
-    # 2) dc:date (ISO8601)
     dc_date = item.findtext("dc:date", namespaces=NS)
     if dc_date:
         try:
@@ -87,24 +62,23 @@ def parse_pubdate(item: ET.Element) -> str:
 def collect_from_source(src: dict) -> list:
     raw = fetch(src["rss"])
     root = ET.fromstring(raw)
-
     items = root.findall(".//item")
-    results = []
-    prefix = src.get("title_prefix")
+    print(f"[INFO] {src['name']}: RSS項目数 = {len(items)}")
 
+    # 診断用：最初の3項目のタイトルを出力
+    for i, item in enumerate(items[:3]):
+        t = (item.findtext("title") or "(タイトル空)").strip()
+        print(f"[DEBUG] title[{i}] = {t!r}")
+
+    keyword = src.get("title_keyword")
+    results = []
     for item in items:
         title = (item.findtext("title") or "").strip()
         link = (item.findtext("link") or "").strip()
         if not title or not link:
             continue
-
-        # 社説のみに絞り込み
-        if prefix:
-            # 「社説：」「社説 」などの表記ゆれを吸収するため接頭一致で判定
-            normalized = title.replace("　", "").replace(" ", "")
-            if not normalized.startswith(prefix):
-                continue
-
+        if keyword and keyword not in title.replace("　", "").replace(" ", ""):
+            continue
         results.append({
             "newspaper": src["name"],
             "title": title,
@@ -112,6 +86,7 @@ def collect_from_source(src: dict) -> list:
             "published": parse_pubdate(item),
         })
 
+    print(f"[INFO] {src['name']}: 社説として一致 = {len(results)} 件")
     return results
 
 
@@ -127,7 +102,6 @@ def load_existing() -> list:
 
 def save(articles: list) -> None:
     os.makedirs(os.path.dirname(DATA_PATH), exist_ok=True)
-    # 公開日の新しい順 → 同日は新聞社名で安定ソート
     articles.sort(key=lambda a: (a.get("published", ""), a.get("newspaper", "")),
                   reverse=True)
     with open(DATA_PATH, "w", encoding="utf-8") as f:
@@ -137,25 +111,31 @@ def save(articles: list) -> None:
 def main() -> int:
     existing = load_existing()
     seen = {a["url"] for a in existing}
-
     added = 0
+    fetch_failed = 0
+
     for src in SOURCES:
         try:
             fetched = collect_from_source(src)
         except Exception as e:
-            print(f"[WARN] {src['name']} の取得に失敗: {e}", file=sys.stderr)
+            fetch_failed += 1
+            print(f"[ERROR] {src['name']} の取得に失敗: {e}", file=sys.stderr)
             continue
-
         for art in fetched:
             if art["url"] in seen:
                 continue
             existing.append(art)
             seen.add(art["url"])
             added += 1
-            print(f"[ADD] {art['published']} {art['newspaper']} {art['title']}")
+            print(f"[ADD] {art['published']} {art['title']}")
 
     save(existing)
     print(f"\n完了: {added} 件追加 / 合計 {len(existing)} 件")
+
+    # 全ソース取得失敗なら赤く止めて気づけるようにする
+    if fetch_failed == len(SOURCES):
+        print("[FATAL] すべてのRSS取得に失敗しました。", file=sys.stderr)
+        return 1
     return 0
 
 
