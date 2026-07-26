@@ -73,8 +73,10 @@ def collect_from_source(src: dict) -> list:
     status = data.get("status")
     items = data.get("items", []) or []
     print(f"[INFO] {src['name']}: proxy status={status}, 項目数={len(items)}")
-    for i, it in enumerate(items[:3]):
+    for i, it in enumerate(items[:10]):
         print(f"[DEBUG] title[{i}] = {it.get('title','')!r}")
+        print(f"[DEBUG]  link[{i}] = {it.get('link','')!r}")
+    
 
     if status != "ok":
         raise RuntimeError(f"proxy status != ok: {status} / {data.get('message','')}")
