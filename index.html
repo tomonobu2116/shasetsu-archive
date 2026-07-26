@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>社説リンクアーカイブ</title>
+<style>
+  :root { --fg:#1a1a1a; --sub:#666; --line:#e2e2e2; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+    color: var(--fg); background: var(--bg); margin: 0; line-height: 1.7;
+  }
+  header {
+    background:#fff; border-bottom:1px solid var(--line); padding:20px 16px;
+  }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 0 16px; }
+  h1 { font-size: 1.4rem; margin: 0; }
+  .lead { color: var(--sub); font-size: .85rem; margin-top: 6px; }
+  .toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin:18px 0; }
+  .toolbar input, .toolbar select {
+    padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:.9rem; background:#fff;
+  }
+  .count { color: var(--sub); font-size:.8rem; margin-left:auto; }
+  .day { margin: 26px 0 8px; }
+  .day h2 {
+    font-size: 1rem; margin:0 0 10px; padding-bottom:6px;
+    border-bottom:2px solid var(--accent); display:inline-block;
+  }
+  ul { list-style:none; margin:0; padding:0; }
+  li {
+    background:#fff; border:1px solid var(--line); border-radius:10px;
+    padding:12px 14px; margin-bottom:8px; display:flex; gap:12px; align-items:baseline;
+  }
+  .paper {
+    flex:0 0 auto; font-size:.72rem; color:#fff; background:var(--accent);
+    padding:2px 8px; border-radius:999px; white-space:nowrap;
+  }
+  a { color: var(--accent); text-decoration:none; word-break:break-word; }
+  a:hover { text-decoration:underline; }
+  .empty { color:var(--sub); padding:40px 0; text-align:center; }
+  footer { color:var(--sub); font-size:.75rem; text-align:center; padding:30px 16px; }
+  footer a { color:var(--sub); }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>社説リンクアーカイブ</h1>
+    <p class="lead">
+      各紙が公開している社説へのリンクを日付ごとにまとめています。
+      掲載しているのは新聞社名・公開日・見出し・元記事リンクのみで、本文は各社サイトでご覧ください。
+    </p>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="toolbar">
+    <input id="q" type="search" placeholder="キーワードで絞り込み（見出し）">
+    <select id="paper"><option value="">すべての新聞社</option></select>
+    <span class="count" id="count"></span>
+  </div>
+  <div id="list"></div>
+</main>
+
+<footer>
+  RSSを利用して自動更新しています。各記事の著作権は各新聞社に帰属します。
+</footer>
+
+<script>
+const state = { all: [], q: "", paper: "" };
+
+async function load() {
+  try {
+    const res = await fetch("data/articles.json?_=" + Date.now());
+    state.all = await res.json();
+  } catch (e) {
+    state.all = [];
+  }
+  initPaperOptions();
+  render();
+}
+
+function initPaperOptions() {
+  const papers = [...new Set(state.all.map(a => a.newspaper))].sort();
+  const sel = document.getElementById("paper");
+  papers.forEach(p => {
+    const o = document.createElement("option");
+    o.value = p; o.textContent = p; sel.appendChild(o);
+  });
+}
+
+function render() {
+  const list = document.getElementById("list");
+  list.innerHTML = "";
+
+  const filtered = state.all.filter(a => {
+    if (state.paper && a.newspaper !== state.paper) return false;
+    if (state.q && !a.title.toLowerCase().includes(state.q.toLowerCase())) return false;
+    return true;
+  });
+
+  document.getElementById("count").textContent = filtered.length + " 件";
+
+  if (filtered.length === 0) {
+    list.innerHTML = '<p class="empty">該当する社説がありません。</p>';
+    return;
+  }
+
+  // 日付ごとにグループ化
+  const byDate = {};
+  filtered.forEach(a => {
+    const d = a.published || "日付不明";
+    (byDate[d] = byDate[d] || []).push(a);
+  });
+
+  Object.keys(byDate).sort().reverse().forEach(date => {
+    const day = document.createElement("section");
+    day.className = "day";
+    day.innerHTML = `<h2>${date}</h2>`;
+    const ul = document.createElement("ul");
+    byDate[date].forEach(a => {
+      const li = document.createElement("li");
+      li.innerHTML =
+        `<span class="paper">${escapeHtml(a.newspaper)}</span>` +
+        `<a href="${encodeURI(a.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(a.title)}</a>`;
+      ul.appendChild(li);
+    });
+    day.appendChild(ul);
+    list.appendChild(day);
+  });
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  }[c]));
+}
+
+document.getElementById("q").addEventListener("input", e => { state.q = e.target.value; render(); });
+document.getElementById("paper").addEventListener("change", e => { state.paper = e.target.value; render(); });
+
+load();
+</script>
+</body>
+</html>
