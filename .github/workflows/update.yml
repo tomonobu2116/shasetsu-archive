@@ -1,0 +1,37 @@
+name: Update shasetsu archive
+
+on:
+  schedule:
+    # UTC 21:00 = JST 06:00 に毎日実行
+    - cron: "0 21 * * *"
+  workflow_dispatch:   # 手動実行も可能
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch shasetsu (RSS)
+        run: python scripts/fetch_shasetsu.py
+
+      - name: Commit if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain data/articles.json)" ]; then
+            git add data/articles.json
+            git commit -m "chore: update articles ($(date -u +%Y-%m-%d))"
+            git push
+          else
+            echo "No changes."
+          fi
